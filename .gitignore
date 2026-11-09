@@ -275,3 +275,6 @@ sounds
 
 # Multiplayer test logs
 logs/
+
+# Local Windows debug launcher
+/run-debug.bat
