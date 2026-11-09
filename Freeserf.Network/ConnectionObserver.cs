@@ -57,6 +57,7 @@ namespace Freeserf.Network
 
                     if (noResponseTime > ConnectionTimeoutInSeconds)
                     {
+                        Log.Verbose.Write(ErrorSystemType.Network, $"Connection observer timeout: observer={GetType().Name} lastCompleteMessageUtc={lastHeartbeatTimeProvider():O} idleSeconds={noResponseTime:F3} limitSeconds={ConnectionTimeoutInSeconds}");
                         NotifyConnectionLost();
                         break;
                     }
@@ -65,6 +66,7 @@ namespace Freeserf.Network
                         if ((DateTime.UtcNow - lastRefreshRequestTime).TotalSeconds >= 1.0)
                         {
                             lastRefreshRequestTime = DateTime.UtcNow;
+                            Log.Verbose.Write(ErrorSystemType.Network, $"Connection observer refresh: observer={GetType().Name} idleSeconds={noResponseTime:F3}");
                             DataRefreshNeeded?.Invoke();
                         }
                     }

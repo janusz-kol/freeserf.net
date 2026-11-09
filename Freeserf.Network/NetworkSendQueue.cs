@@ -11,6 +11,7 @@ namespace Freeserf.Network
     internal sealed class NetworkSendQueue : IDisposable
     {
         readonly Stream stream;
+        readonly string peer;
         readonly Action closeConnection;
         readonly Action<Exception> connectionLost;
         readonly TimeSpan sendTimeout;
@@ -29,9 +30,10 @@ namespace Freeserf.Network
         internal Task Completion { get; }
 
         internal NetworkSendQueue(Stream stream, Action closeConnection, Action<Exception> connectionLost,
-            TimeSpan? sendTimeout = null, long maxPendingBytes = 128 * 1024 * 1024)
+            TimeSpan? sendTimeout = null, long maxPendingBytes = 128 * 1024 * 1024, string peer = "unknown")
         {
             this.stream = stream;
+            this.peer = peer;
             this.closeConnection = closeConnection;
             this.connectionLost = connectionLost;
             this.sendTimeout = sendTimeout ?? TimeSpan.FromSeconds(10);
@@ -52,6 +54,7 @@ namespace Freeserf.Network
                     var copy = (byte[])data.Clone();
                     pendingBytes += copy.LongLength + 8;
                     packets.Writer.TryWrite(copy);
+                    Log.Verbose.Write(ErrorSystemType.Network, $"TCP queue peer={peer} enqueue payloadBytes={copy.Length} pendingBytes={pendingBytes} limitBytes={maxPendingBytes}");
                     return;
                 }
             }
@@ -67,9 +70,13 @@ namespace Freeserf.Network
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
                     timeout.CancelAfter(sendTimeout);
-                    await Host.WriteDataAsync(stream, data, timeout.Token);
+                    Log.Verbose.Write(ErrorSystemType.Network, $"TCP queue peer={peer} write-start payloadBytes={data.Length} deadlineMs={sendTimeout.TotalMilliseconds}");
+                    await Host.WriteDataAsync(stream, data, timeout.Token, peer);
                     lock (sync)
+                    {
                         pendingBytes -= data.LongLength + 8;
+                        Log.Verbose.Write(ErrorSystemType.Network, $"TCP queue peer={peer} write-complete payloadBytes={data.Length} pendingBytes={pendingBytes}");
+                    }
                 }
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -97,6 +104,7 @@ namespace Freeserf.Network
                 if (stopped)
                     return;
                 stopped = true;
+                Log.Verbose.Write(ErrorSystemType.Network, $"TCP queue peer={peer} stop pendingBytes={pendingBytes} graceful={completing} reason={error?.Message ?? "shutdown"}");
                 packets.Writer.TryComplete();
                 cancellation.Cancel();
             }

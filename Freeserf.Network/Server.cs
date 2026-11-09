@@ -34,7 +34,7 @@ namespace Freeserf.Network
     {
         const byte ProtocolVersion = 0;
 
-        internal static byte[] ReadData(NetworkStream stream, int length)
+        internal static byte[] ReadData(NetworkStream stream, int length, NetworkTransferLog trace = null)
         {
             List<byte> largeBuffer = new List<byte>(1024);
             byte[] buffer = new byte[1024];
@@ -46,56 +46,86 @@ namespace Freeserf.Network
                 if (numRead == 0)
                     throw new System.IO.EndOfStreamException("Peer disconnected during a network packet.");
                 largeBuffer.AddRange(buffer.Take(numRead));
+                trace?.Progress(numRead);
                 length -= numRead;
             } while (length != 0);
 
             return largeBuffer.ToArray();
         }
 
-        internal static byte[] ReadData(NetworkStream stream)
+        internal static byte[] ReadData(NetworkStream stream, string peer = "unknown")
         {
-            // 'F' 'S' 'N' 0xVV 0xSSSSSSSS where the last 4 bytes give the length of the arriving data.
-            // VV is the protocol version (0 for now).
-            var header = ReadData(stream, 8);
-
-            if (header[0] != 'F' || header[1] != 'S' || header[2] != 'N')
+            using var trace = new NetworkTransferLog($"RX peer={peer}");
+            try
             {
-                Log.Debug.Write(ErrorSystemType.Network, $"Package with unknown header arrived and was discarded.");
-                return null; // Not for freeserf.net
-            }
+                // 'F' 'S' 'N' 0xVV 0xSSSSSSSS where the last 4 bytes give the length of the arriving data.
+                // VV is the protocol version (0 for now).
+                trace.Phase("header-read", 8);
+                var header = ReadData(stream, 8, trace);
 
-            if (ProtocolVersion < header[3])
+                if (header[0] != 'F' || header[1] != 'S' || header[2] != 'N')
+                {
+                    Log.Debug.Write(ErrorSystemType.Network, $"Package with unknown header arrived and was discarded.");
+                    return null; // Not for freeserf.net
+                }
+
+                if (ProtocolVersion < header[3])
+                {
+                    Log.Debug.Write(ErrorSystemType.Network, $"Package with unsupported protocol version 0x{header[3]:x2} arrived and was discarded.");
+                    return null; // We do not support the given protocol version
+                }
+
+                uint length = BitConverter.ToUInt32(header, 4);
+
+                if (length == 0)
+                {
+                    Log.Debug.Write(ErrorSystemType.Network, $"Package with a size of 0 bytes arrived and was discarded.");
+                    return null;
+                }
+
+                if (length > int.MaxValue)
+                {
+                    Log.Debug.Write(ErrorSystemType.Network, $"Package with an out-of-bounds size of {length} bytes arrived and was discarded.");
+                    return null;
+                }
+
+                trace.Phase("payload-read", length);
+                return ReadData(stream, (int)(length & 0x7fffffff), trace);
+            }
+            catch (Exception ex)
             {
-                Log.Debug.Write(ErrorSystemType.Network, $"Package with unsupported protocol version 0x{header[3]:x2} arrived and was discarded.");
-                return null; // We do not support the given protocol version
+                trace.Failed(ex);
+                throw;
             }
-
-            uint length = BitConverter.ToUInt32(header, 4);
-
-            if (length == 0)
-            {
-                Log.Debug.Write(ErrorSystemType.Network, $"Package with a size of 0 bytes arrived and was discarded.");
-                return null;
-            }
-
-            if (length > int.MaxValue)
-            {
-                Log.Debug.Write(ErrorSystemType.Network, $"Package with an out-of-bounds size of {length} bytes arrived and was discarded.");
-                return null;
-            }
-
-            return ReadData(stream, (int)(length & 0x7fffffff));
         }
 
-        internal static async Task WriteDataAsync(System.IO.Stream stream, byte[] data, CancellationToken cancellationToken)
+        internal static async Task WriteDataAsync(System.IO.Stream stream, byte[] data, CancellationToken cancellationToken,
+            string peer = "unknown")
         {
-            byte[] header = new byte[]
+            using var trace = new NetworkTransferLog($"TX peer={peer} type={(data.Length >= 2 ? BitConverter.ToUInt16(data, 0) : -1)}");
+            try
             {
-                (byte)'F', (byte)'S', (byte)'N', ProtocolVersion
-            };
-            await stream.WriteAsync(header, cancellationToken);
-            await stream.WriteAsync(BitConverter.GetBytes((uint)data.Length), cancellationToken);
-            await stream.WriteAsync(data, cancellationToken);
+                byte[] header = new byte[]
+                {
+                    (byte)'F', (byte)'S', (byte)'N', ProtocolVersion
+                };
+                trace.Phase("magic-write", header.Length);
+                await stream.WriteAsync(header, cancellationToken);
+                trace.Progress(header.Length);
+                trace.Phase("length-write", 4);
+                await stream.WriteAsync(BitConverter.GetBytes((uint)data.Length), cancellationToken);
+                trace.Progress(4);
+                // WriteAsync only reports completion of the entire write. A pending payload
+                // does NOT mean no bytes are flowing; compare with the receiver and TCP capture.
+                trace.Phase("payload-write-await", data.Length);
+                await stream.WriteAsync(data, cancellationToken);
+                trace.Progress(data.Length);
+            }
+            catch (Exception ex)
+            {
+                trace.Failed(ex);
+                throw;
+            }
         }
 
         internal static IPAddress GetLocalIpAddress()
@@ -572,7 +602,7 @@ namespace Freeserf.Network
                             continue;
                         }
 
-                        var data = Host.ReadData(stream);
+                        var data = Host.ReadData(stream, $"client={client.Ip} player={client.PlayerIndex}");
 
                         if (data != null && data.Length > 0)
                         {
@@ -1409,7 +1439,7 @@ namespace Freeserf.Network
             {
                 Log.Error.Write(ErrorSystemType.Network, "Unable to send data to the server: " + ex.Message);
                 ConnectionLost?.Invoke();
-            });
+            }, peer: $"server={Ip}");
 
             receiveTask = Run(localClient, cancelTokenSource.Token);
         }
@@ -1442,7 +1472,7 @@ namespace Freeserf.Network
                                 continue;
                             }
 
-                            var data = Host.ReadData(stream);
+                            var data = Host.ReadData(stream, $"server={Ip}");
 
                             if (data != null && data.Length > 0)
                             {

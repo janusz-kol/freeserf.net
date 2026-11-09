@@ -730,7 +730,7 @@ namespace Freeserf.Network
                 Log.Error.Write(ErrorSystemType.Network, $"Unable to send data to client {Ip} (player {PlayerIndex}): {ex.Message}");
                 disconnectToken.Cancel();
                 NotifyConnectionLost();
-            });
+            }, peer: $"client={Ip} player={PlayerIndex}");
 
             ConnectionLost += () =>
             {
