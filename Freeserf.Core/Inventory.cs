@@ -611,15 +611,6 @@ namespace Freeserf
                 return false;
             }
 
-            // Don't make another specialist while one is waiting in the stock.
-            // Knights are the exception: new knights must be made even when some
-            // are in the stock (the slot only refers to one idle serf of the type).
-            if (state.Serfs[type] != 0 &&
-                (type < Serf.Type.Knight0 || type > Serf.Type.Knight4))
-            {
-                return false;
-            }
-
             if ((ResourcesNeededForSpecializing[(int)type * 2] != Resource.Type.None)
                 && (state.Resources[ResourcesNeededForSpecializing[(int)type * 2]] == 0))
             {
@@ -658,6 +649,15 @@ namespace Freeserf
 
         public Serf SpecializeFreeSerf(Serf.Type type)
         {
+            // Recruitment needs at most one idle specialist per type. Explicit
+            // specialization (including the initial castle roster) may create more.
+            // Knights retain the existing exception for multiple recruits.
+            if (type != Serf.Type.None && state.Serfs[type] != 0 &&
+                (type < Serf.Type.Knight0 || type > Serf.Type.Knight4))
+            {
+                return null;
+            }
+
             if (state.Serfs[Serf.Type.Generic] == 0)
             {
                 return null;
