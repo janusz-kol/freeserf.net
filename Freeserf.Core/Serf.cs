@@ -4981,8 +4981,13 @@ namespace Freeserf
                 }
             }
             else
-            { // out 
-                inventory.CallOutSerf(this);
+            { // out
+                // The inventory caches only one idle serf per profession. Select
+                // this worker explicitly so every departure is counted, including
+                // workers not currently represented by that cached index.
+                inventory.SerfIdleInStock(this);
+                if (!inventory.CallOutSerf(this))
+                    return;
 
                 SetState(State.ReadyToLeaveInventory);
                 stateData.ReadyToLeaveInventory.Mode = -3;
