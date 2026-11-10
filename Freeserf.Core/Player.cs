@@ -868,7 +868,7 @@ namespace Freeserf
 
             var building = Game.GetBuilding((uint)this.selectedBuildingIndex);
 
-            // Spawn 3 generic serfs
+            // Spawn five generic serfs
             for (int i = 0; i < 5; i++)
             {
                 SpawnSerf(null, null, false);
